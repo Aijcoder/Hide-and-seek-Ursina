@@ -7,14 +7,28 @@ import uuid
 import json
 import time
 import tkinter as tk
-from tkinter import simpledialog
+from tkinter import simpledialog, colorchooser
 
 # === TKINTER LAUNCHER ===
 root = tk.Tk()
 root.withdraw()
 
+# Ask for player name
 player_name = simpledialog.askstring("Player Name", "Enter your name:") or "Player"
+
+# Ask for server IP
 SERVER_IP = simpledialog.askstring("Server IP", "Enter server IP:", initialvalue="ws://134.226.108.225:8765") or "ws://134.226.108.225:8765"
+
+# Ask for player color
+rgb_color, hex_color = colorchooser.askcolor(title="Choose your player color")
+hex_color = hex_color or "#3498db"  # Fallback if user cancels
+
+# Convert hex string to Ursina Color
+player_color = color.rgb(
+    int(hex_color[1:3], 16),
+    int(hex_color[3:5], 16),
+    int(hex_color[5:7], 16)
+)
 
 # === Multiplayer Setup ===
 client_id = str(uuid.uuid4())
@@ -37,6 +51,8 @@ window.size = (1600, 900)
 # === Global Vars ===
 platforms = []
 scoreboard = {"easy": [], "medium": [], "hard": []}
+# === Aimed Player UI Name Display ===
+aimed_player_label = Text(text='', origin=(0,0), position=(0, -0.45), scale=2, color=color.white)
 
 # === Platform Helper ===
 def create_platform(pos, color=color.white, scale=(3, 0.5, 3), name=''):
@@ -192,23 +208,29 @@ def update_scoreboard():
 from ursina import Vec3
 
 def update():
+    # Lane logic
     for plat in medium_lane:
         plat.enabled = player.completed_easy
     for plat in hard_lane:
         plat.enabled = player.completed_easy and player.completed_medium
 
-    for pid, data in other_players.items():
-        if 'entity' in data and 'label' in data:
-            entity = data['entity']
-            label = data['label']
+    # Raycast from camera center
+    aimed_player_label.text = ''
+    hit_info = raycast(
+        camera.world_position,
+        camera.forward,
+        distance=50, 
+        ignore=[player.controller],
+        debug=False
+    )
 
-            # Position name tag above the sphere (adjust Y based on sphere scale)
-            label.world_position = entity.world_position + Vec3(0, 1.3, 0)
 
-            # Face the name tag toward the camera (horizontal only)
-            look_pos = Vec3(camera.world_position.x, label.y, camera.world_position.z)
-            label.look_at(look_pos, axis='up')
-            label.rotation_y += 180
+    if hit_info.hit:
+        for pid, data in other_players.items():
+            if hit_info.entity == data['entity']:
+                aimed_player_label.text = data['name']
+                break
+
 
 
 
@@ -227,10 +249,12 @@ def send_position():
                 'name': player_name,
                 'x': player.controller.x,
                 'y': player.controller.y,
-                'z': player.controller.z
+                'z': player.controller.z,
+                'color': hex_color  # ✅ Send hex string
             }))
         except Exception as e:
             print("[!] Send error:", e)
+
 
 def listen_to_server():
     while True:
@@ -241,32 +265,27 @@ def listen_to_server():
                 pid = data['id']
                 pos = Vec3(data['x'], data['y'], data['z'])
 
-                
                 if pid not in other_players:
-                    # Create grounded player model using a sphere
+                    color_value = data.get('color', '#3498db')
                     model = Entity(
                         model='sphere',
-                        color=color.azure,
+                        color=color.hex(color_value),  # ✅ this *is* valid
                         scale=1,
                         position=pos,
-                        collider='box'
+                        collider='sphere'
                     )
 
-                    # Roblox-style floating name tag
-                    name_tag = Text(
-                        text=data.get('name', 'Player'),
-                        scale=1.5,
-                        origin=(0, 0),
-                        color=color.white,
-                        world=True
-                    )
+
 
                     other_players[pid] = {
                         'entity': model,
-                        'label': name_tag
+                        'name': data.get('name', 'Player')  # <-- Store actual name
                     }
                 else:
                     other_players[pid]['entity'].position = pos
+
+
+
 
         except Exception as e:
             print("[!] Connection error:", e)
